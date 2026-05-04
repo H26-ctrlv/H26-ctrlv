@@ -1,4 +1,4 @@
-// App.js — Daily Voca v28.1.1 Realtime Firebase Sync
+// App.js — Daily Voca v28.1.3 Realtime Firebase Sync
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import "./styles.css";
@@ -3642,13 +3642,13 @@ export default function App() {
   function buildCloudAppStatePayload() {
     return safeJsonValue(
       {
-        version: "v28.1.0",
+        version: "v28.1.3",
         words,
         settings,
         theme,
         updatedAt: Date.now(),
       },
-      { version: "v28.1.0", words: [], settings: DEFAULT_SETTINGS, theme: DEFAULT_THEME, updatedAt: Date.now() }
+      { version: "v28.1.3", words: [], settings: DEFAULT_SETTINGS, theme: DEFAULT_THEME, updatedAt: Date.now() }
     );
   }
 
@@ -4649,10 +4649,6 @@ export default function App() {
         </div>
 
         <div className="header-right">
-          <div className="header-version">
-            v28.1.0 Realtime Firebase Sync
-          </div>
-
           <div className="header-actions">
             <button
               className={cloud.user ? "btnMini authTopBtn loggedIn" : "btnMini authTopBtn"}
@@ -4797,6 +4793,7 @@ export default function App() {
           <div className="bpModalSheet" onClick={(e) => e.stopPropagation()}>
             <div className="bpModalHeader">
               <div className="bpModalTitle">설정</div>
+              <div className="bpModalVersion">v28.1.3 Realtime Firebase Sync</div>
               <button
                 className="bpModalClose"
                 onClick={() => setAppSettingsOpen(false)}
