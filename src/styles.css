@@ -3232,45 +3232,117 @@ iframe,
 .srsResultLine.no{ opacity: 1; }
 
 /* =========================================================
-   ☁️ Firebase Login Sync UI (ver28.0.0)
+   ✅ ver28.1.0 Realtime Firebase Sync UI
+   - 상단 로그인 버튼 + 로그인 모달
+   - 설정창 내 구 클라우드 패널 정리 안내
    ========================================================= */
-.cloudLoginBox,
-.cloudSyncBox{
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 14px;
-  background: rgba(255,255,255,0.055);
-  padding: 12px;
+.authTopBtn {
+  min-width: 74px;
+  font-weight: 900 !important;
 }
-
-.cloudLoginGrid{
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 8px;
+.authTopBtn.loggedIn {
+  background: rgba(64, 220, 135, 0.14) !important;
+  border-color: rgba(64, 220, 135, 0.38) !important;
+  color: #dfffea !important;
 }
-
-.cloudLoginGrid input{
-  width: 100%;
-  min-width: 0;
+.authModalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.56);
+  backdrop-filter: blur(3px);
 }
-
-.cloudActions{
-  justify-content: flex-start;
-  margin-top: 8px;
+.authModal {
+  width: min(560px, 100%);
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(19, 42, 61, 0.98);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.48);
+  padding: 14px;
 }
-
-.cloudSmallNote{
-  margin-top: 8px;
+.authModalTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.authModalTitle {
+  font-size: 18px;
+  font-weight: 900;
+}
+.authModalSub,
+.authHelp,
+.syncStatusText {
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
-  color: var(--muted);
 }
-
-@media (max-width: 560px){
-  .cloudLoginGrid{
+.authFields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+.authFields input {
+  width: 100%;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--fg);
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+.authActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 12px;
+}
+.authSignedBox {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+.syncToggleLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.syncInfoBox {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  display: grid;
+  gap: 8px;
+}
+.authHelp {
+  margin-top: 12px;
+}
+@media (max-width: 560px) {
+  .authFields {
     grid-template-columns: 1fr;
   }
-  .cloudLoginBox,
-  .cloudSyncBox{
-    padding: 10px;
+  .authModal {
+    padding: 12px;
+  }
+  .authActions .pill {
+    flex: 1 1 auto;
+  }
+  .authTopBtn {
+    min-width: 64px;
   }
 }
