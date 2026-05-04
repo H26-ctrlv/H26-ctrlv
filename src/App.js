@@ -1,4 +1,4 @@
-// App.js — Cherry Voca ver2 (folded sections + fixes)
+// App.js — Daily Voca v28.1.1 Realtime Firebase Sync
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import "./styles.css";
@@ -3801,7 +3801,6 @@ export default function App() {
       cancelled = true;
       if (typeof unsub === "function") unsub();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud?.user?.uid]);
 
   useEffect(() => {
@@ -3835,7 +3834,6 @@ export default function App() {
     return () => {
       if (syncSaveTimerRef.current) clearTimeout(syncSaveTimerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [words, settings, theme, cloud?.user?.uid, cloud?.liveSync]);
 
   async function loadLibrary() {
