@@ -3230,3 +3230,47 @@ iframe,
 }
 .srsResultLine.ok{ opacity: 1; }
 .srsResultLine.no{ opacity: 1; }
+
+/* =========================================================
+   ☁️ Firebase Login Sync UI (ver28.0.0)
+   ========================================================= */
+.cloudLoginBox,
+.cloudSyncBox{
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 14px;
+  background: rgba(255,255,255,0.055);
+  padding: 12px;
+}
+
+.cloudLoginGrid{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.cloudLoginGrid input{
+  width: 100%;
+  min-width: 0;
+}
+
+.cloudActions{
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
+.cloudSmallNote{
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+@media (max-width: 560px){
+  .cloudLoginGrid{
+    grid-template-columns: 1fr;
+  }
+  .cloudLoginBox,
+  .cloudSyncBox{
+    padding: 10px;
+  }
+}
