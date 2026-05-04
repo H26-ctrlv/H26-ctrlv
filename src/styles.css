@@ -429,7 +429,7 @@ details.fold .fold-body {
     font-size: 13px;
   }
   .app-title {
-    font-size: 15px;
+    font-size: 20px;
   }
 }
 
@@ -3344,5 +3344,135 @@ iframe,
   }
   .authTopBtn {
     min-width: 64px;
+  }
+}
+
+/* =========================================================
+   ver28.1.2 Header title alignment fix
+   - Keep 🥭 Daily Voca 🍒 on one clean line
+   - Prevent emoji-only wrapping
+   - Compact header buttons on narrow screens
+   ========================================================= */
+.header-bar-v2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.header-bar-v2 .header-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.header-bar-v2 .app-title,
+.app-title {
+  display: block;
+  font-size: clamp(22px, 4.4vw, 34px);
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: -0.035em;
+  white-space: nowrap !important;
+  word-break: keep-all;
+  overflow: hidden;
+  text-overflow: clip;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.header-bar-v2 .header-right {
+  flex: 0 0 auto;
+  min-width: max-content;
+}
+
+.header-bar-v2 .header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.header-bar-v2 .btnMini {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 720px) {
+  .header-bar-v2 {
+    gap: 8px;
+  }
+
+  .header-bar-v2 .app-title,
+  .app-title {
+    font-size: clamp(18px, 4.6vw, 26px);
+    letter-spacing: -0.04em;
+  }
+
+  .header-bar-v2 .header-version {
+    font-size: 10px;
+    opacity: 0.72;
+  }
+
+  .header-bar-v2 .header-actions {
+    gap: 6px;
+  }
+
+  .header-bar-v2 .btnMini {
+    padding: 7px 10px;
+    font-size: 14px;
+    border-radius: 12px;
+  }
+
+  .header-bar-v2 .btnMini.btnMiniIcon {
+    padding: 7px 9px;
+    min-width: 38px;
+  }
+}
+
+@media (max-width: 560px) {
+  .header-bar-v2 {
+    gap: 6px;
+  }
+
+  .header-bar-v2 .app-title,
+  .app-title {
+    font-size: clamp(15px, 4.2vw, 20px);
+    letter-spacing: -0.05em;
+  }
+
+  .header-bar-v2 .header-version {
+    display: none;
+  }
+
+  .header-bar-v2 .header-actions {
+    gap: 5px;
+  }
+
+  .header-bar-v2 .btnMini {
+    padding: 6px 8px;
+    font-size: 13px;
+    min-height: 34px;
+  }
+
+  .header-bar-v2 .btnMini.btnMiniIcon {
+    padding: 6px 8px;
+    min-width: 34px;
+  }
+}
+
+@media (max-width: 390px) {
+  .header-bar-v2 .app-title,
+  .app-title {
+    font-size: 14px;
+    letter-spacing: -0.055em;
+  }
+
+  .header-bar-v2 .btnMini {
+    padding: 5px 7px;
+    font-size: 12px;
   }
 }
