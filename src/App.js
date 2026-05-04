@@ -1,4 +1,4 @@
-// App.js — Daily Voca v28.1.3 Realtime Firebase Sync
+// App.js — Daily Voca v28.1.4 Realtime Firebase Sync
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import "./styles.css";
@@ -1756,6 +1756,37 @@ function pickBestRuVoice(preferredName) {
 }
 
 // ====== TTS ======
+// ✅ ver28.1.4: speechSynthesis 안정화
+// - 이전 버전에서는 timerId가 지역 변수로 선언되지 않아 TTS Promise가 즉시 resolve될 수 있었음
+// - 그 결과 KO 발화가 끝나기 전에 RU가 큐에 쌓이고, 중지 버튼도 즉시 멈춘 것처럼 보이지 않는 문제가 있었음
+const activeSpeechFinishers = new Set();
+
+function hardCancelSpeech() {
+  // 현재 대기 중인 speak() Promise들을 즉시 종료시켜 재생 루프가 토큰을 확인하고 멈추게 함
+  try {
+    activeSpeechFinishers.forEach((finish) => {
+      try {
+        finish('hard-cancel');
+      } catch {}
+    });
+    activeSpeechFinishers.clear();
+  } catch {}
+
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+
+  // 브라우저/iOS Safari에서 cancel이 한 번에 안 먹는 경우가 있어 여러 번 안전 호출
+  try { synth.cancel(); } catch {}
+  try { synth.pause?.(); } catch {}
+  try { synth.cancel(); } catch {}
+  setTimeout(() => {
+    try { synth.cancel(); } catch {}
+  }, 0);
+  setTimeout(() => {
+    try { synth.cancel(); } catch {}
+  }, 80);
+}
+
 function pickVoiceByName(name) {
   try {
     return (
@@ -1781,11 +1812,37 @@ function pickVoiceByLang(regex) {
 }
 function speak(text, langTag, opts = {}) {
   return new Promise((resolve) => {
+    let timerId = null;
+    let settled = false;
+    let u = null;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+
+      if (timerId) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+
+      activeSpeechFinishers.delete(finish);
+
+      try {
+        if (u) {
+          u.onstart = null;
+          u.onend = null;
+          u.onerror = null;
+        }
+      } catch {}
+
+      resolve();
+    };
+
     try {
       const synth = window.speechSynthesis;
-      if (!synth) return resolve();
+      if (!synth) return finish();
 
-      const u = new SpeechSynthesisUtterance(text || " ");
+      u = new SpeechSynthesisUtterance(text || " ");
 
       // voice 선택
       let voice = null;
@@ -1796,7 +1853,7 @@ function speak(text, langTag, opts = {}) {
         .startsWith("ru");
 
       if (isRu) {
-        voice = pickBestRuVoice(opts.voiceName); // voiceName 지정했으면 그거 우선, 아니면 자동
+        voice = pickBestRuVoice(opts.voiceName);
       } else {
         if (opts.voiceName) voice = pickVoiceByName(opts.voiceName);
         if (!voice) {
@@ -1811,51 +1868,32 @@ function speak(text, langTag, opts = {}) {
       u.rate = typeof opts.rate === "number" ? opts.rate : 1;
       u.pitch = typeof opts.pitch === "number" ? opts.pitch : 1;
 
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-
-        // ✅ watchdog 정리
-        if (timerId) {
-          clearTimeout(timerId);
-          timerId = null;
-        }
-
-        try {
-          u.onend = null;
-          u.onerror = null;
-        } catch {}
-        resolve();
-      };
-
       u.onend = finish;
       u.onerror = finish;
 
-      // ✅ 여기서 cancel은 “카드 전환 시 cleanup”에서만 하는 게 안정적
+      activeSpeechFinishers.add(finish);
+
+      // ✅ 새 발화를 시작하기 전 기존 TTS 정리 옵션
       if (opts.cancelBeforeSpeak) {
         try {
-          // speaking/pending일 때만 정리 (무조건 cancel 반복 호출 금지)
-          if (synth.speaking || synth.pending) synth.cancel();
+          if (synth.speaking || synth.pending) hardCancelSpeech();
         } catch {}
       }
 
-      // ✅ cancel 이후 묵음/정지 상태 방지
       try {
         synth.resume?.();
       } catch {}
 
-      synth.speak(u);
-
-      // ✅ 안전장치(이벤트가 아예 안 오는 환경 대비) - 절대 "짧게" 잡지 말 것
+      // ✅ 안전장치: 이벤트가 안 오는 환경 대비. 단, 이 타이머는 지역 변수로 반드시 선언되어야 함.
       const watchdogMs = Math.min(
         45000,
-        Math.max(8000, (String(text || "").length || 1) * 350)
+        Math.max(9000, (String(text || "").length || 1) * 420)
       );
-      // ✅ timerId에 저장
       timerId = setTimeout(finish, watchdogMs);
+
+      synth.speak(u);
     } catch {
-      resolve();
+      finish();
     }
   });
 }
@@ -2175,9 +2213,7 @@ function normalizeAudioUrl(url) {
   return u;
 }
 function stopAllAudio(audioRef) {
-  try {
-    window.speechSynthesis?.cancel();
-  } catch {}
+  hardCancelSpeech();
   try {
     if (audioRef?.current) {
       audioRef.current.pause();
@@ -2209,7 +2245,7 @@ async function tryPlayUrlAudio(
       try {
         const synth = window.speechSynthesis;
         if (synth) {
-          if (synth.speaking || synth.pending) synth.cancel();
+          if (synth.speaking || synth.pending) hardCancelSpeech();
           synth.resume?.();
         }
       } catch {}
@@ -2332,7 +2368,7 @@ async function tryPlayBlobAudio(
       try {
         const synth = window.speechSynthesis;
         if (synth) {
-          if (synth.speaking || synth.pending) synth.cancel();
+          if (synth.speaking || synth.pending) hardCancelSpeech();
           synth.resume?.();
         }
       } catch {}
@@ -3433,9 +3469,7 @@ export default function App() {
     setIsPlaying(false);
 
     // ✅ TTS 즉시 중단 + 큐 비우기
-    try {
-      window.speechSynthesis?.cancel();
-    } catch {}
+    hardCancelSpeech();
 
     // ✅ 오디오 즉시 중단
     stopAllAudio(audioRef);
@@ -3642,13 +3676,13 @@ export default function App() {
   function buildCloudAppStatePayload() {
     return safeJsonValue(
       {
-        version: "v28.1.3",
+        version: "v28.1.4",
         words,
         settings,
         theme,
         updatedAt: Date.now(),
       },
-      { version: "v28.1.3", words: [], settings: DEFAULT_SETTINGS, theme: DEFAULT_THEME, updatedAt: Date.now() }
+      { version: "v28.1.4", words: [], settings: DEFAULT_SETTINGS, theme: DEFAULT_THEME, updatedAt: Date.now() }
     );
   }
 
@@ -4793,7 +4827,7 @@ export default function App() {
           <div className="bpModalSheet" onClick={(e) => e.stopPropagation()}>
             <div className="bpModalHeader">
               <div className="bpModalTitle">설정</div>
-              <div className="bpModalVersion">v28.1.3 Realtime Firebase Sync</div>
+              <div className="bpModalVersion">v28.1.4 Realtime Firebase Sync</div>
               <button
                 className="bpModalClose"
                 onClick={() => setAppSettingsOpen(false)}
