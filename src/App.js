@@ -2650,6 +2650,9 @@ export default function App() {
   const [importText, setImportText] = useState("");
   const [srsSettingsOpen, setSrsSettingsOpen] = useState(false);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   // ✅ Apply-to-all folder defaults (Settings UI)
   const [applyAllRU, setApplyAllRU] = useState(() => settings?.repeatRU ?? 3);
   const [applyAllKO, setApplyAllKO] = useState(() => settings?.repeatKO ?? 1);
@@ -3447,9 +3450,8 @@ export default function App() {
   const [cloud, setCloud] = useState(() =>
     load(STORAGE.cloud, {
       configured: !!load(STORAGE.fbConfig, null),
-      enabled: false,
-      autoSync: false,
-      online: false,
+      enabled: true,
+      liveSync: true,
       user: null,
       deckId: "",
       deckTitle: "",
@@ -3463,9 +3465,6 @@ export default function App() {
   }, [cloud]);
 
   const fbRef = useRef({ app: null, auth: null, db: null });
-  const cloudAutoSaveTimerRef = useRef(null);
-  const cloudHydratingRef = useRef(false);
-
   useEffect(() => {
     const { user, ...persist } = cloud; // do not persist user object
     save(STORAGE.cloud, persist);
@@ -3501,6 +3500,9 @@ export default function App() {
       fbRef.current.app = firebase.initializeApp(config);
       fbRef.current.auth = firebase.auth();
       fbRef.current.db = firebase.firestore();
+      try {
+        fbRef.current.db.settings({ ignoreUndefinedProperties: true });
+      } catch {}
       try {
         await fbRef.current.auth.setPersistence(
           window.firebase.auth.Auth.Persistence.LOCAL
@@ -3543,6 +3545,7 @@ export default function App() {
         await auth.setPersistence(window.firebase.auth.Auth.Persistence.LOCAL);
       } catch {}
       await auth.signInWithEmailAndPassword(email.trim(), password);
+      setLoginOpen(false);
     } catch (e) {
       console.error("email sign-in failed", e);
       alert("로그인 실패: 이메일/비밀번호 또는 Firebase 로그인 설정을 확인하세요.");
@@ -3558,12 +3561,24 @@ export default function App() {
         await auth.setPersistence(window.firebase.auth.Auth.Persistence.LOCAL);
       } catch {}
       await auth.createUserWithEmailAndPassword(email.trim(), password);
+      setLoginOpen(false);
     } catch (e) {
       console.error("email sign-up failed", e);
       alert("회원가입 실패: 이미 가입된 이메일이거나 Firebase Email/Password 로그인이 꺼져 있을 수 있습니다.");
     }
   }
 
+  async function resetEmailPassword(email) {
+    if (!email) return alert("비밀번호를 재설정할 이메일을 입력하세요.");
+    try {
+      const { auth } = await ensureFirebase();
+      await auth.sendPasswordResetEmail(email.trim());
+      alert("비밀번호 재설정 메일을 보냈습니다.");
+    } catch (e) {
+      console.error("password reset failed", e);
+      alert("비밀번호 재설정 메일 발송에 실패했습니다.");
+    }
+  }
   async function signOut() {
     try {
       const { auth } = await ensureFirebase();
@@ -3571,14 +3586,14 @@ export default function App() {
     } finally {
       setCloud((c) => ({
         ...c,
-        enabled: false,
-        autoSync: false,
+        enabled: true,
+        liveSync: true,
         online: false,
         user: null,
         deckId: "",
         deckTitle: "",
         library: [],
-        syncStatus: "",
+        syncStatus: "로그아웃됨",
       }));
     }
   }
@@ -3607,6 +3622,221 @@ export default function App() {
   useEffect(() => {
     completeEmailLinkIfNeeded();
   }, []);
+
+  function safeJsonValue(value, fallback) {
+    try {
+      return JSON.parse(JSON.stringify(value ?? fallback));
+    } catch {
+      return fallback;
+    }
+  }
+
+  function getUserAppStateDoc(db, uid) {
+    return db
+      .collection("users")
+      .doc(uid)
+      .collection("appState")
+      .doc("main");
+  }
+
+  function buildCloudAppStatePayload() {
+    return safeJsonValue(
+      {
+        version: "v28.1.0",
+        words,
+        settings,
+        theme,
+        updatedAt: Date.now(),
+      },
+      { version: "v28.1.0", words: [], settings: DEFAULT_SETTINGS, theme: DEFAULT_THEME, updatedAt: Date.now() }
+    );
+  }
+
+  const syncApplyingRemoteRef = useRef(false);
+  const syncSaveTimerRef = useRef(null);
+  const syncLastUploadedRef = useRef("");
+  const syncStartedForUidRef = useRef("");
+
+  function applyRemoteAppState(data) {
+    if (!data) return;
+    syncApplyingRemoteRef.current = true;
+    try {
+      if (Array.isArray(data.words)) {
+        setWords(
+          data.words.map((w) => ({
+            folder: DEFAULT_FOLDER,
+            mark: null,
+            ruAudio: "",
+            audioKey: "",
+            audioMime: "",
+            ...w,
+            folder: w.folder || DEFAULT_FOLDER,
+            mark: w.mark || null,
+            ruAudio: w.ruAudio || "",
+            audioKey: w.audioKey || "",
+            audioMime: w.audioMime || "",
+            mp3Source: w.mp3Source || "",
+          }))
+        );
+      }
+      if (data.settings) setSettings((s) => ({ ...s, ...data.settings }));
+      if (data.theme) setTheme((t) => ({ ...t, ...data.theme }));
+    } finally {
+      setTimeout(() => {
+        syncApplyingRemoteRef.current = false;
+      }, 400);
+    }
+  }
+
+  async function cloudSaveAppState({ silent = false } = {}) {
+    const c = cloudRef.current;
+    if (!c?.user) {
+      if (!silent) alert("로그인이 필요합니다.");
+      return false;
+    }
+    try {
+      const { db } = await ensureFirebase();
+      const payload = buildCloudAppStatePayload();
+      await getUserAppStateDoc(db, c.user.uid).set(payload, { merge: true });
+      syncLastUploadedRef.current = JSON.stringify(payload);
+      setCloud((prev) => ({
+        ...prev,
+        enabled: true,
+        liveSync: true,
+        syncStatus: `동기화 완료 ${new Date(payload.updatedAt).toLocaleTimeString()}`,
+      }));
+      if (!silent) alert("클라우드에 저장했습니다.");
+      return true;
+    } catch (e) {
+      console.error("cloudSaveAppState failed", e);
+      setCloud((prev) => ({ ...prev, syncStatus: "동기화 저장 실패" }));
+      if (!silent) alert("클라우드 저장 실패: Firebase 권한/네트워크를 확인하세요.");
+      return false;
+    }
+  }
+
+  async function cloudLoadAppState({ silent = false } = {}) {
+    const c = cloudRef.current;
+    if (!c?.user) {
+      if (!silent) alert("로그인이 필요합니다.");
+      return false;
+    }
+    try {
+      const { db } = await ensureFirebase();
+      const snap = await getUserAppStateDoc(db, c.user.uid).get();
+      if (!snap.exists) {
+        setCloud((prev) => ({ ...prev, syncStatus: "클라우드 데이터 없음" }));
+        if (!silent) alert("클라우드 데이터가 없습니다. 현재 기기 데이터를 먼저 저장합니다.");
+        await cloudSaveAppState({ silent: true });
+        return false;
+      }
+      const data = snap.data() || {};
+      applyRemoteAppState(data);
+      const when = data.updatedAt ? new Date(data.updatedAt).toLocaleTimeString() : "";
+      setCloud((prev) => ({
+        ...prev,
+        enabled: true,
+        liveSync: true,
+        syncStatus: "클라우드 불러오기 완료" + (when ? ` ${when}` : ""),
+      }));
+      if (!silent) alert("클라우드에서 불러왔습니다.");
+      return true;
+    } catch (e) {
+      console.error("cloudLoadAppState failed", e);
+      setCloud((prev) => ({ ...prev, syncStatus: "클라우드 불러오기 실패" }));
+      if (!silent) alert("클라우드 불러오기 실패: Firebase 권한/네트워크를 확인하세요.");
+      return false;
+    }
+  }
+
+  useEffect(() => {
+    const uidNow = cloud?.user?.uid || "";
+    if (!uidNow) {
+      syncStartedForUidRef.current = "";
+      return;
+    }
+
+    let unsub = null;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { db } = await ensureFirebase();
+        const ref = getUserAppStateDoc(db, uidNow);
+        setCloud((prev) => ({ ...prev, enabled: true, liveSync: true, syncStatus: "실시간 동기화 연결 중..." }));
+
+        const firstSnap = await ref.get();
+        if (cancelled) return;
+
+        if (firstSnap.exists) {
+          applyRemoteAppState(firstSnap.data() || {});
+          setCloud((prev) => ({ ...prev, syncStatus: "실시간 동기화 연결됨" }));
+        } else {
+          await ref.set(buildCloudAppStatePayload(), { merge: true });
+          setCloud((prev) => ({ ...prev, syncStatus: "현재 기기 데이터로 클라우드 시작" }));
+        }
+
+        syncStartedForUidRef.current = uidNow;
+        unsub = ref.onSnapshot((snap) => {
+          if (!snap.exists) return;
+          const data = snap.data() || {};
+          const incoming = JSON.stringify(safeJsonValue({ words: data.words || [], settings: data.settings || {}, theme: data.theme || {} }, {}));
+          const current = JSON.stringify(safeJsonValue({ words, settings, theme }, {}));
+          if (incoming === current) return;
+          applyRemoteAppState(data);
+          setCloud((prev) => ({
+            ...prev,
+            syncStatus: data.updatedAt
+              ? `다른 기기 변경 반영 ${new Date(data.updatedAt).toLocaleTimeString()}`
+              : "다른 기기 변경 반영",
+          }));
+        });
+      } catch (e) {
+        console.error("realtime sync subscribe failed", e);
+        setCloud((prev) => ({ ...prev, syncStatus: "실시간 동기화 연결 실패" }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (typeof unsub === "function") unsub();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloud?.user?.uid]);
+
+  useEffect(() => {
+    const c = cloudRef.current;
+    if (!c?.user?.uid || c.liveSync === false) return;
+    if (syncApplyingRemoteRef.current) return;
+    if (syncStartedForUidRef.current !== c.user.uid) return;
+
+    const payload = buildCloudAppStatePayload();
+    const payloadJson = JSON.stringify(payload);
+    if (payloadJson === syncLastUploadedRef.current) return;
+
+    if (syncSaveTimerRef.current) clearTimeout(syncSaveTimerRef.current);
+    syncSaveTimerRef.current = setTimeout(async () => {
+      try {
+        const { db } = await ensureFirebase();
+        await getUserAppStateDoc(db, c.user.uid).set(payload, { merge: true });
+        syncLastUploadedRef.current = payloadJson;
+        setCloud((prev) => ({
+          ...prev,
+          enabled: true,
+          liveSync: true,
+          syncStatus: `자동 동기화 ${new Date(payload.updatedAt).toLocaleTimeString()}`,
+        }));
+      } catch (e) {
+        console.error("auto sync save failed", e);
+        setCloud((prev) => ({ ...prev, syncStatus: "자동 동기화 실패" }));
+      }
+    }, 900);
+
+    return () => {
+      if (syncSaveTimerRef.current) clearTimeout(syncSaveTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [words, settings, theme, cloud?.user?.uid, cloud?.liveSync]);
 
   async function loadLibrary() {
     try {
@@ -3757,93 +3987,6 @@ export default function App() {
       await ref.set(pr, { merge: true });
     } catch {}
   }
-
-  function buildCloudAppStatePayload() {
-    return JSON.parse(
-      JSON.stringify({
-        app: "Daily Voca",
-        version: "v28.0.0 Firebase Login Sync",
-        words,
-        settings,
-        theme,
-        updatedAt: now(),
-      })
-    );
-  }
-
-  async function cloudSaveAppState({ silent = false } = {}) {
-    try {
-      const c = cloudRef.current;
-      if (!c.user) {
-        if (!silent) alert("로그인 후 사용할 수 있습니다.");
-        return false;
-      }
-      const { db } = await ensureFirebase();
-      setCloud((prev) => ({ ...prev, syncStatus: "저장 중..." }));
-      await db
-        .collection("users")
-        .doc(c.user.uid)
-        .collection("appState")
-        .doc("main")
-        .set(buildCloudAppStatePayload());
-      const msg = "클라우드 저장 완료 " + new Date().toLocaleTimeString();
-      setCloud((prev) => ({ ...prev, enabled: true, syncStatus: msg }));
-      if (!silent) alert("현재 단어장/설정/SRS 상태를 클라우드에 저장했습니다.");
-      return true;
-    } catch (e) {
-      console.error("cloudSaveAppState failed", e);
-      setCloud((prev) => ({ ...prev, syncStatus: "저장 실패" }));
-      if (!silent) alert("클라우드 저장 실패: Firebase 권한/규칙을 확인하세요.");
-      return false;
-    }
-  }
-
-  async function cloudLoadAppState({ silent = false } = {}) {
-    try {
-      const c = cloudRef.current;
-      if (!c.user) {
-        if (!silent) alert("로그인 후 사용할 수 있습니다.");
-        return false;
-      }
-      const { db } = await ensureFirebase();
-      setCloud((prev) => ({ ...prev, syncStatus: "불러오는 중..." }));
-      const snap = await db
-        .collection("users")
-        .doc(c.user.uid)
-        .collection("appState")
-        .doc("main")
-        .get();
-      if (!snap.exists) {
-        setCloud((prev) => ({ ...prev, syncStatus: "클라우드 데이터 없음" }));
-        if (!silent) alert("아직 클라우드에 저장된 데이터가 없습니다.");
-        return false;
-      }
-      const data = snap.data() || {};
-      cloudHydratingRef.current = true;
-      if (Array.isArray(data.words)) setWords(data.words);
-      if (data.settings) setSettings((s) => ({ ...s, ...data.settings }));
-      if (data.theme) setTheme((t) => ({ ...t, ...data.theme }));
-      setTimeout(() => {
-        cloudHydratingRef.current = false;
-      }, 1200);
-      const when = data.updatedAt
-        ? new Date(data.updatedAt).toLocaleString()
-        : "시간 정보 없음";
-      setCloud((prev) => ({
-        ...prev,
-        enabled: true,
-        syncStatus: "클라우드 불러오기 완료: " + when,
-      }));
-      if (!silent) alert("클라우드 데이터를 이 기기로 불러왔습니다.");
-      return true;
-    } catch (e) {
-      console.error("cloudLoadAppState failed", e);
-      cloudHydratingRef.current = false;
-      setCloud((prev) => ({ ...prev, syncStatus: "불러오기 실패" }));
-      if (!silent) alert("클라우드 불러오기 실패: Firebase 권한/규칙을 확인하세요.");
-      return false;
-    }
-  }
   function shareLink() {
     const c = cloudRef.current;
     if (!c.deckId) return alert("덱을 먼저 선택");
@@ -3886,26 +4029,6 @@ export default function App() {
     const d = p.get("deck");
     if (d) setCloud((c) => ({ ...c, deckId: c.deckId || d }));
   }, []);
-
-  useEffect(() => {
-    const c = cloudRef.current;
-    if (!c?.user || !c?.enabled || !c?.autoSync) return;
-    if (cloudHydratingRef.current) return;
-
-    if (cloudAutoSaveTimerRef.current) {
-      clearTimeout(cloudAutoSaveTimerRef.current);
-    }
-
-    cloudAutoSaveTimerRef.current = setTimeout(() => {
-      cloudSaveAppState({ silent: true });
-    }, 1800);
-
-    return () => {
-      if (cloudAutoSaveTimerRef.current) {
-        clearTimeout(cloudAutoSaveTimerRef.current);
-      }
-    };
-  }, [words, settings, theme, cloud?.user?.uid, cloud?.enabled, cloud?.autoSync]);
 
   function downloadBlob(filename, blob) {
     const url = URL.createObjectURL(blob);
@@ -4529,10 +4652,18 @@ export default function App() {
 
         <div className="header-right">
           <div className="header-version">
-            v28.0.0 Firebase Login Sync
+            v28.1.0 Realtime Firebase Sync
           </div>
 
           <div className="header-actions">
+            <button
+              className={cloud.user ? "btnMini authTopBtn loggedIn" : "btnMini authTopBtn"}
+              onClick={() => setLoginOpen(true)}
+              title={cloud.user ? `로그인됨: ${cloud.user.email || cloud.user.displayName || cloud.user.uid}` : "로그인"}
+            >
+              {cloud.user ? "✅ 계정" : "로그인"}
+            </button>
+
             <button
               className="btnMini"
               onClick={() => exportZipWithAudio({ words })}
@@ -4575,6 +4706,89 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* 로그인 팝업 */}
+      {loginOpen && (
+        <div className="authModalOverlay" onClick={() => setLoginOpen(false)}>
+          <div className="authModal" onClick={(e) => e.stopPropagation()}>
+            <div className="authModalTop">
+              <div>
+                <div className="authModalTitle">계정 로그인</div>
+                <div className="authModalSub">
+                  {cloud.user
+                    ? `${cloud.user.email || cloud.user.displayName || cloud.user.uid} 로그인 중`
+                    : "로그인하면 단어장과 설정이 기기 간 실시간 동기화됩니다."}
+                </div>
+              </div>
+              <button className="bpModalClose" onClick={() => setLoginOpen(false)}>✕</button>
+            </div>
+
+            {!cloud.user && (
+              <>
+                <div className="authFields">
+                  <input
+                    type="email"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="이메일"
+                    autoComplete="email"
+                  />
+                  <input
+                    type="password"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="비밀번호"
+                    autoComplete="current-password"
+                  />
+                </div>
+                <div className="authActions">
+                  <button className="pill primary" onClick={() => signInEmailPassword(loginEmail, loginPassword)}>
+                    이메일 로그인
+                  </button>
+                  <button className="pill" onClick={() => signUpEmailPassword(loginEmail, loginPassword)}>
+                    회원가입
+                  </button>
+                  <button className="pill" onClick={signInGoogle}>
+                    Google 로그인
+                  </button>
+                  <button className="pill" onClick={() => resetEmailPassword(loginEmail)}>
+                    비밀번호 재설정
+                  </button>
+                </div>
+              </>
+            )}
+
+            {cloud.user && (
+              <div className="authSignedBox">
+                <div className="syncStatusText">동기화 상태: {cloud.syncStatus || "연결됨"}</div>
+                <label className="syncToggleLine">
+                  <input
+                    type="checkbox"
+                    checked={cloud.liveSync !== false}
+                    onChange={(e) => setCloud((c) => ({ ...c, liveSync: e.target.checked }))}
+                  />
+                  실시간 자동 동기화 사용
+                </label>
+                <div className="authActions">
+                  <button className="pill" onClick={() => cloudSaveAppState()}>
+                    지금 저장
+                  </button>
+                  <button className="pill" onClick={() => cloudLoadAppState()}>
+                    지금 불러오기
+                  </button>
+                  <button className="pill danger" onClick={signOut}>
+                    로그아웃
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="authHelp">
+              로그인 유지 방식은 LOCAL입니다. 같은 기기/브라우저에서는 다시 열어도 로그인 상태가 유지됩니다.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 설정(🔧) 팝업 */}
       {appSettingsOpen && (
@@ -4689,27 +4903,24 @@ export default function App() {
                 </div>
               </Fold>
 
-              <Fold title="☁️ Cloud (선택 사항)">
-                <CloudPanel
-                  cloud={cloud}
-                  setCloud={setCloud}
-                  ensureFirebase={ensureFirebase}
-                  saveFirebaseConfig={saveFirebaseConfig}
-                  signInGoogle={signInGoogle}
-                  signInEmailPassword={signInEmailPassword}
-                  signUpEmailPassword={signUpEmailPassword}
-                  signOut={signOut}
-                  cloudSaveAppState={cloudSaveAppState}
-                  cloudLoadAppState={cloudLoadAppState}
-                  loadLibrary={loadLibrary}
-                  createDeck={createDeck}
-                  pullDeckToLocal={pullDeckToLocal}
-                  pushLocalToDeck={pushLocalToDeck}
-                  loadDeckJoinToLocal={loadDeckJoinToLocal}
-                  shareLink={shareLink}
-                  sendEmailLinkLogin={sendEmailLinkLogin}
-                  bare
-                />
+              <Fold title="☁️ 계정 동기화">
+                <div className="syncInfoBox">
+                  <div><b>실시간 동기화는 상단 [로그인]에서 관리합니다.</b></div>
+                  <div>로그인 상태에서 단어/설정이 바뀌면 Firebase에 자동 저장되고, 같은 계정의 다른 기기에 반영됩니다.</div>
+                  <div className="syncStatusText">상태: {cloud.syncStatus || (cloud.user ? "동기화 대기 중" : "로그인 필요")}</div>
+                  <label className="syncToggleLine">
+                    <input
+                      type="checkbox"
+                      checked={cloud.liveSync !== false}
+                      onChange={(e) => setCloud((c) => ({ ...c, liveSync: e.target.checked }))}
+                    />
+                    실시간 자동 동기화 사용
+                  </label>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    <button className="pill" onClick={() => cloudSaveAppState()}>지금 클라우드 저장</button>
+                    <button className="pill" onClick={() => cloudLoadAppState()}>지금 클라우드 불러오기</button>
+                  </div>
+                </div>
               </Fold>
 
               <ThemePanel theme={theme} setTheme={setTheme} />
@@ -9046,11 +9257,7 @@ function CloudPanel({
   ensureFirebase,
   saveFirebaseConfig,
   signInGoogle,
-  signInEmailPassword,
-  signUpEmailPassword,
   signOut,
-  cloudSaveAppState,
-  cloudLoadAppState,
   loadLibrary,
   createDeck,
   pullDeckToLocal,
@@ -9067,8 +9274,6 @@ function CloudPanel({
   const [replacePush, setReplacePush] = useState(false);
   const [mergePull, setMergePull] = useState(true);
   const [emailForLink, setEmailForLink] = useState("");
-  const [emailLogin, setEmailLogin] = useState("");
-  const [passwordLogin, setPasswordLogin] = useState("");
 
   return (
     <div
@@ -9125,102 +9330,29 @@ function CloudPanel({
           </button>
         </details>
 
-        <div className="cloudLoginBox">
-          <div className="cloudLoginGrid">
-            <input
-              value={emailLogin}
-              onChange={(e) => setEmailLogin(e.target.value)}
-              placeholder="이메일"
-              autoComplete="email"
-            />
-            <input
-              value={passwordLogin}
-              onChange={(e) => setPasswordLogin(e.target.value)}
-              placeholder="비밀번호"
-              type="password"
-              autoComplete="current-password"
-            />
-          </div>
-          <div className="header-actions cloudActions">
-            <button
-              className="pill"
-              onClick={() => signInEmailPassword(emailLogin, passwordLogin)}
-            >
-              이메일 로그인
-            </button>
-            <button
-              className="pill"
-              onClick={() => signUpEmailPassword(emailLogin, passwordLogin)}
-            >
-              회원가입
-            </button>
-            <button className="pill" onClick={signInGoogle}>
-              Google 로그인
-            </button>
-            <button className="pill" onClick={signOut}>
-              로그아웃
-            </button>
-          </div>
-          <div className="cloudSmallNote">
-            한 번 로그인하면 이 기기에서는 계속 유지됩니다. 공용 기기에서는 로그아웃하세요.
-          </div>
-        </div>
+        <div className="header-actions">
+          <button className="pill" onClick={signInGoogle}>
+            Google 로그인
+          </button>
+          <button className="pill" onClick={signOut}>
+            로그아웃
+          </button>
+          <button className="pill" onClick={loadLibrary}>
+            내 라이브러리 불러오기
+          </button>
 
-        <details>
-          <summary style={{ cursor: "pointer" }}>이메일 링크 로그인(선택)</summary>
-          <div className="header-actions" style={{ marginTop: 8 }}>
-            <input
-              value={emailForLink}
-              onChange={(e) => setEmailForLink(e.target.value)}
-              placeholder="이메일 입력"
-              style={{ width: 220 }}
-            />
-            <button
-              className="pill"
-              onClick={() => sendEmailLinkLogin(emailForLink)}
-            >
-              이메일 링크 보내기
-            </button>
-          </div>
-        </details>
-
-        <div className="cloudSyncBox">
-          <div style={{ fontWeight: 800 }}>사용자별 클라우드 동기화</div>
-          <div className="header-actions cloudActions" style={{ marginTop: 8 }}>
-            <button className="pill primary" onClick={() => cloudSaveAppState()}>
-              클라우드 저장
-            </button>
-            <button className="pill" onClick={() => cloudLoadAppState()}>
-              클라우드 불러오기
-            </button>
-            <button className="pill" onClick={loadLibrary}>
-              내 라이브러리 불러오기
-            </button>
-          </div>
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              marginTop: 8,
-            }}
+          <input
+            value={emailForLink}
+            onChange={(e) => setEmailForLink(e.target.value)}
+            placeholder="이메일 입력"
+            style={{ width: 220 }}
+          />
+          <button
+            className="pill"
+            onClick={() => sendEmailLinkLogin(emailForLink)}
           >
-            <input
-              type="checkbox"
-              checked={!!cloud.autoSync}
-              onChange={(e) =>
-                setCloud((c) => ({
-                  ...c,
-                  enabled: e.target.checked ? true : c.enabled,
-                  autoSync: e.target.checked,
-                }))
-              }
-            />
-            자동 동기화 사용
-          </label>
-          <div className="cloudSmallNote">
-            {cloud.syncStatus || "처음 사용하는 기기에서는 먼저 ‘클라우드 불러오기’를 누르는 것을 추천합니다."}
-          </div>
+            이메일 링크 로그인
+          </button>
         </div>
 
         <div
@@ -9241,10 +9373,10 @@ function CloudPanel({
                 setCloud((c) => ({ ...c, enabled: e.target.checked }))
               }
             />{" "}
-            구형 덱 진행 저장 사용
+            진행 저장(클라우드) 사용
           </label>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
-            새 동기화는 위의 사용자별 클라우드 저장/불러오기를 사용합니다.
+            덱ID가 설정되어 있으면 학습 진행이 Firestore에 저장됩니다.
           </span>
         </div>
 
