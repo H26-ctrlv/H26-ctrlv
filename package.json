@@ -1,7 +1,7 @@
 {
   "name": "daily-voca",
-  "version": "28.0.0",
-  "description": "Daily Voca React app with Firebase login sync",
+  "version": "1.0.0",
+  "description": "Daily Voca React app",
   "keywords": [],
   "main": "src/index.js",
   "dependencies": {
