@@ -1,4 +1,4 @@
-// App.js — Daily Voca v28.1.6 Realtime Firebase Sync
+// App.js — Daily Voca v28.1.7 Exact Player Restore
 // Audio playback core restored from stable App.js; minimal timerId declaration added for build safety.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
@@ -4795,7 +4795,7 @@ export default function App() {
           <div className="bpModalSheet" onClick={(e) => e.stopPropagation()}>
             <div className="bpModalHeader">
               <div className="bpModalTitle">설정</div>
-              <div className="bpModalVersion">v28.1.6 Realtime Firebase Sync</div>
+              <div className="bpModalVersion">v28.1.7 Exact Player Restore</div>
               <button
                 className="bpModalClose"
                 onClick={() => setAppSettingsOpen(false)}
