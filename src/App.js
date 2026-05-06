@@ -1,4 +1,4 @@
-// App.js — Daily Voca v28.1.7 Exact Player Restore
+// App.js — Daily Voca v28.1.8 Folder Loop Fix
 // Audio playback core restored from stable App.js; minimal timerId declaration added for build safety.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
@@ -3369,7 +3369,10 @@ export default function App() {
       ...settings,
       repeatRU: pref?.repeatRU ?? settings.repeatRU,
       repeatKO: pref?.repeatKO ?? settings.repeatKO,
+      // ✅ 폴더별 전체 반복값을 실제 재생 엔진에 전달
+      loopRounds: pref?.loopRounds ?? settings.loopRounds ?? 1,
       gapMs: pref?.gapMs ?? settings.gapMs,
+      rampMode: pref?.rampMode ?? settings.rampMode ?? "none",
     };
 
     playIndexRef.current = Math.max(0, Math.min(list.length - 1, start));
@@ -4795,7 +4798,7 @@ export default function App() {
           <div className="bpModalSheet" onClick={(e) => e.stopPropagation()}>
             <div className="bpModalHeader">
               <div className="bpModalTitle">설정</div>
-              <div className="bpModalVersion">v28.1.7 Exact Player Restore</div>
+              <div className="bpModalVersion">v28.1.8 Folder Loop Fix</div>
               <button
                 className="bpModalClose"
                 onClick={() => setAppSettingsOpen(false)}
