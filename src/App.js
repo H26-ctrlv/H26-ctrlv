@@ -1,4 +1,4 @@
-// App.js — Daily Voca v28.1.8 Folder Loop Fix
+// App.js — Daily Voca v28.1.9 Bottom Headphone Start Fix
 // Audio playback core restored from stable App.js; minimal timerId declaration added for build safety.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
@@ -3647,13 +3647,13 @@ export default function App() {
   function buildCloudAppStatePayload() {
     return safeJsonValue(
       {
-        version: "v28.1.6",
+        version: "v28.1.9",
         words,
         settings,
         theme,
         updatedAt: Date.now(),
       },
-      { version: "v28.1.6", words: [], settings: DEFAULT_SETTINGS, theme: DEFAULT_THEME, updatedAt: Date.now() }
+      { version: "v28.1.9", words: [], settings: DEFAULT_SETTINGS, theme: DEFAULT_THEME, updatedAt: Date.now() }
     );
   }
 
@@ -4798,7 +4798,7 @@ export default function App() {
           <div className="bpModalSheet" onClick={(e) => e.stopPropagation()}>
             <div className="bpModalHeader">
               <div className="bpModalTitle">설정</div>
-              <div className="bpModalVersion">v28.1.8 Folder Loop Fix</div>
+              <div className="bpModalVersion">v28.1.9 Bottom Headphone Start Fix</div>
               <button
                 className="bpModalClose"
                 onClick={() => setAppSettingsOpen(false)}
@@ -7850,8 +7850,20 @@ function AddWord({
 
                       // ✅ 현재 스크롤에서 '헤더 바로 아래'에 온전히 보이는 첫 단어부터 재생 시작
                       const getTopVisibleWordId = () => {
+                        // ✅ 상단 헤드폰은 .folderContent 안에 있지만,
+                        // ✅ 하단 고정 헤드폰은 .folderContent 밖에 있어서
+                        //    이전에는 현재 보이는 줄을 못 찾고 항상 폴더 첫 줄부터 재생됨.
+                        const bottomPlayer = e.currentTarget.closest(".bpBottomPlayer");
+                        const maybeFolderContentFromBottom =
+                          bottomPlayer?.previousElementSibling?.previousElementSibling;
+                        const folderContentFromBottom =
+                          maybeFolderContentFromBottom?.classList?.contains("folderContent")
+                            ? maybeFolderContentFromBottom
+                            : null;
+
                         const root =
                           e.currentTarget.closest(".folderContent") ||
+                          folderContentFromBottom ||
                           e.currentTarget.closest(".folderBox") ||
                           e.currentTarget.parentElement;
                         const sc = root?.querySelector?.(".bpListScroll");
@@ -8585,8 +8597,19 @@ function AddWord({
 
                             // ✅ 현재 스크롤에서 '헤더 바로 아래'에 온전히 보이는 첫 단어부터 재생 시작
                             const getTopVisibleWordId = () => {
+                              // ✅ 하단 고정 헤드폰은 .folderContent 밖에 있으므로
+                              //    바로 앞 형제 구조에서 해당 폴더의 목록 영역을 찾아준다.
+                              const bottomPlayer = e.currentTarget.closest(".bpBottomPlayer");
+                              const maybeFolderContentFromBottom =
+                                bottomPlayer?.previousElementSibling?.previousElementSibling;
+                              const folderContentFromBottom =
+                                maybeFolderContentFromBottom?.classList?.contains("folderContent")
+                                  ? maybeFolderContentFromBottom
+                                  : null;
+
                               const root =
                                 e.currentTarget.closest(".folderContent") ||
+                                folderContentFromBottom ||
                                 e.currentTarget.closest(".folderBox") ||
                                 e.currentTarget.parentElement;
                               const sc = root?.querySelector?.(".bpListScroll");
@@ -8714,8 +8737,19 @@ function AddWord({
 
                             // ✅ 현재 스크롤에서 '헤더 바로 아래'에 온전히 보이는 첫 단어부터 재생 시작
                             const getTopVisibleWordId = () => {
+                              // ✅ 하단 고정 헤드폰은 .folderContent 밖에 있으므로
+                              //    바로 앞 형제 구조에서 해당 폴더의 목록 영역을 찾아준다.
+                              const bottomPlayer = e.currentTarget.closest(".bpBottomPlayer");
+                              const maybeFolderContentFromBottom =
+                                bottomPlayer?.previousElementSibling?.previousElementSibling;
+                              const folderContentFromBottom =
+                                maybeFolderContentFromBottom?.classList?.contains("folderContent")
+                                  ? maybeFolderContentFromBottom
+                                  : null;
+
                               const root =
                                 e.currentTarget.closest(".folderContent") ||
+                                folderContentFromBottom ||
                                 e.currentTarget.closest(".folderBox") ||
                                 e.currentTarget.parentElement;
                               const sc = root?.querySelector?.(".bpListScroll");
