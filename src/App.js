@@ -1,4 +1,4 @@
-// App.js — Daily Voca v28.1.9 Bottom Headphone Start Fix
+// App.js — Daily Voca v28.2.1 Strict Multi-Language TTS
 // Audio playback core restored from stable App.js; minimal timerId declaration added for build safety.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
@@ -1663,6 +1663,8 @@ const DEFAULT_SETTINGS = {
   gapMs: 1000,
   ruVoiceName: "",
   koVoiceName: "",
+  enVoiceName: "",
+  strictTtsLanguage: true,
   ttsVolume: 1,
   ttsRate: 1,
   ttsPitch: 1,
@@ -1757,29 +1759,98 @@ function pickBestRuVoice(preferredName) {
 }
 
 // ====== TTS ======
-function pickVoiceByName(name) {
+function getVoicesSafe() {
   try {
-    return (
-      (window.speechSynthesis?.getVoices?.() || []).find(
-        (v) => v.name === name
-      ) || null
-    );
+    return window.speechSynthesis?.getVoices?.() || [];
   } catch {
-    return null;
+    return [];
   }
 }
-function pickVoiceByLang(regex) {
-  try {
-    const vs = window.speechSynthesis?.getVoices?.() || [];
-    return (
-      vs.find((v) => regex.test(v.lang)) ||
-      vs.find((v) => regex.test(v.name)) ||
-      null
-    );
-  } catch {
-    return null;
-  }
+
+function langBase(langTag = "") {
+  return String(langTag || "").toLowerCase().split("-")[0];
 }
+
+function voiceMatchesLang(voice, langTag) {
+  const base = langBase(langTag);
+  const lang = String(voice?.lang || "").toLowerCase();
+  return !!base && (lang === base || lang.startsWith(`${base}-`));
+}
+
+function getVoiceNameForLang(settings = {}, langTag = "") {
+  const base = langBase(langTag);
+  if (base === "ru") return settings?.ruVoiceName || "";
+  if (base === "ko") return settings?.koVoiceName || "";
+  if (base === "en") return settings?.enVoiceName || "";
+  return "";
+}
+
+function findStrictVoice(langTag, preferredName = "") {
+  const voices = getVoicesSafe();
+  if (!voices.length) return null;
+
+  const base = langBase(langTag);
+  const exactLang = String(langTag || "").toLowerCase();
+
+  const sameLangVoices = voices.filter((v) => voiceMatchesLang(v, langTag));
+
+  // 1) 사용자가 선택한 음성이 있으면, 반드시 같은 언어인 경우에만 사용
+  if (preferredName) {
+    const wanted = normName(preferredName);
+    const exact = sameLangVoices.find((v) => normName(v.name) === wanted);
+    if (exact) return exact;
+
+    const partial = sameLangVoices.find((v) => normName(v.name).includes(wanted));
+    if (partial) return partial;
+  }
+
+  if (!sameLangVoices.length) return null;
+
+  // 2) 정확한 지역 코드 우선: ru-RU, ko-KR, en-US 등
+  const exactRegion = sameLangVoices.find(
+    (v) => String(v.lang || "").toLowerCase() === exactLang
+  );
+  if (exactRegion) return exactRegion;
+
+  // 3) 영어는 기기별로 en-US/en-GB가 섞이므로 자연스러운 Google/Enhanced 계열 우선
+  if (base === "en") {
+    const preferred = sameLangVoices.find((v) =>
+      /google|enhanced|premium|samantha|daniel|alex/i.test(v.name || "")
+    );
+    if (preferred) return preferred;
+  }
+
+  // 4) 러시아어는 기존 점수 함수 유지
+  if (base === "ru") {
+    sameLangVoices.sort((a, b) => scoreRuVoice(b) - scoreRuVoice(a));
+    return sameLangVoices[0] || null;
+  }
+
+  return sameLangVoices[0] || null;
+}
+
+function detectLangTagFromText(text = "", fallbackTag = "ru-RU") {
+  const s = String(text || "").trim();
+  if (/[а-яё]/i.test(s)) return "ru-RU";
+  if (/[가-힣]/.test(s)) return "ko-KR";
+  if (/[A-Za-z]/.test(s)) return "en-US";
+  return fallbackTag;
+}
+
+const missingVoiceNotice = new Set();
+function notifyMissingVoiceOnce(langTag) {
+  const base = langBase(langTag);
+  if (!base || missingVoiceNotice.has(base)) return;
+  missingVoiceNotice.add(base);
+
+  const label =
+    base === "ru" ? "러시아어" : base === "ko" ? "한국어" : base === "en" ? "영어" : langTag;
+
+  try {
+    console.warn(`[Daily Voca] ${label} TTS voice not found: ${langTag}`);
+  } catch {}
+}
+
 function speak(text, langTag, opts = {}) {
   return new Promise((resolve) => {
     let timerId = null;
@@ -1787,27 +1858,18 @@ function speak(text, langTag, opts = {}) {
       const synth = window.speechSynthesis;
       if (!synth) return resolve();
 
-      const u = new SpeechSynthesisUtterance(text || " ");
+      const strictLanguage = opts.strictLanguage !== false;
+      const voice = findStrictVoice(langTag, opts.voiceName || "");
 
-      // voice 선택
-      let voice = null;
-
-      // ✅ RU는 "자동 최적 보이스" 우선
-      const isRu = String(langTag || "")
-        .toLowerCase()
-        .startsWith("ru");
-
-      if (isRu) {
-        voice = pickBestRuVoice(opts.voiceName); // voiceName 지정했으면 그거 우선, 아니면 자동
-      } else {
-        if (opts.voiceName) voice = pickVoiceByName(opts.voiceName);
-        if (!voice) {
-          const base = (langTag || "").split("-")[0];
-          voice = pickVoiceByLang(new RegExp(`^${base}\\b`, "i"));
-        }
+      // ✅ 핵심: 잘못된 언어 음성으로 대체하지 않음
+      // Android에서 ru-RU voice가 없을 때 ko-KR/기본 음성으로 읽는 문제를 막는다.
+      if (strictLanguage && !voice) {
+        notifyMissingVoiceOnce(langTag);
+        return resolve();
       }
-      if (voice) u.voice = voice;
 
+      const u = new SpeechSynthesisUtterance(text || " ");
+      if (voice) u.voice = voice;
       u.lang = voice?.lang || langTag;
       u.volume = typeof opts.volume === "number" ? opts.volume : 1;
       u.rate = typeof opts.rate === "number" ? opts.rate : 1;
@@ -1817,13 +1879,10 @@ function speak(text, langTag, opts = {}) {
       const finish = () => {
         if (settled) return;
         settled = true;
-
-        // ✅ watchdog 정리
         if (timerId) {
           clearTimeout(timerId);
           timerId = null;
         }
-
         try {
           u.onend = null;
           u.onerror = null;
@@ -1834,27 +1893,22 @@ function speak(text, langTag, opts = {}) {
       u.onend = finish;
       u.onerror = finish;
 
-      // ✅ 여기서 cancel은 “카드 전환 시 cleanup”에서만 하는 게 안정적
       if (opts.cancelBeforeSpeak) {
         try {
-          // speaking/pending일 때만 정리 (무조건 cancel 반복 호출 금지)
           if (synth.speaking || synth.pending) synth.cancel();
         } catch {}
       }
 
-      // ✅ cancel 이후 묵음/정지 상태 방지
       try {
         synth.resume?.();
       } catch {}
 
       synth.speak(u);
 
-      // ✅ 안전장치(이벤트가 아예 안 오는 환경 대비) - 절대 "짧게" 잡지 말 것
       const watchdogMs = Math.min(
         45000,
         Math.max(8000, (String(text || "").length || 1) * 350)
       );
-      // ✅ timerId에 저장
       timerId = setTimeout(finish, watchdogMs);
     } catch {
       resolve();
@@ -1875,12 +1929,10 @@ function normalizeRuTtsText(text) {
   if (!t) return t;
 
   // ✅ (1) 특정 종결(특히 l/? !)에서 iOS RU TTS 떨림/울림 완화: 억양을 눌러줌
-  // - "сде́лал?" 같이 끝이 "л?"로 끝나는 경우 체감 개선이 큰 편
   t = t.replace(/л\?$/u, "л?…");
   t = t.replace(/л!$/u, "л!…");
 
   // ✅ (2) 일부 자음군 "дл"에서 울림이 도드라지면 TTS용으로만 아주 미세 분리
-  // 필요 없거나 어색하면 이 줄을 주석 처리해도 OK
   t = t.replace(/дл([а-яё])/giu, "д л$1");
 
   // ✅ (3) 끝이 문장부호로 끝나지 않으면 마침표 추가 (억양 안정화)
@@ -1889,17 +1941,19 @@ function normalizeRuTtsText(text) {
   return t;
 }
 
-function ensureVoicesLoaded({ timeoutMs = 3500 } = {}) {
+function ensureVoicesLoaded({ timeoutMs = 5000 } = {}) {
   const synth = window.speechSynthesis;
   if (!synth || !synth.getVoices) return Promise.resolve([]);
 
-  // 1) 이미 있으면 즉시 반환
+  try {
+    synth.resume?.();
+  } catch {}
+
   try {
     const v0 = synth.getVoices();
     if (v0 && v0.length) return Promise.resolve(v0);
   } catch {}
 
-  // 2) voiceschanged 기다리되, iOS에서 이벤트가 늦거나 안 오는 케이스 대비 폴링
   return new Promise((resolve) => {
     const start = Date.now();
     let done = false;
@@ -1922,7 +1976,6 @@ function ensureVoicesLoaded({ timeoutMs = 3500 } = {}) {
         const v = synth.getVoices();
         if (v && v.length) return finish();
       } catch {}
-      // 이벤트 왔는데도 비면 폴링이 마저 처리
     };
 
     try {
@@ -1935,7 +1988,6 @@ function ensureVoicesLoaded({ timeoutMs = 3500 } = {}) {
         const v = synth.getVoices();
         if (v && v.length) return finish();
       } catch {}
-
       if (Date.now() - start >= timeoutMs) return finish();
       setTimeout(tick, 100);
     };
@@ -1946,56 +1998,43 @@ function ensureVoicesLoaded({ timeoutMs = 3500 } = {}) {
 
 function needsAntiWobbleRu(t) {
   const s = String(t || "").toLowerCase();
-
-  // r/l 포함 + 자음군에서 더 티남
   return (
     /[рл]/.test(s) &&
     /[бвгджзйклмнпрстфхцчшщ][рл]|[рл][бвгджзйклмнпрстфхцчшщ]/.test(s)
   );
 }
 
-// ✅ RU만 특별 취급: voice가 안 잡히면 "мягкий знак" 같은 철자읽기가 나올 수 있어서
-const speakRU = async (t, s) => {
+async function speakByDetectedLanguage(text, fallbackTag, settings = {}, extra = {}) {
   await ensureVoicesLoaded();
+  const langTag = detectLangTagFromText(text, fallbackTag);
+  const base = langBase(langTag);
+  const voiceName = getVoiceNameForLang(settings, langTag);
 
-  const txt = normalizeRuTtsText(t);
-  const wobble = needsAntiWobbleRu(txt);
+  let outText = String(text || "");
+  let rate = settings?.ttsRate ?? 1;
+  let pitch = settings?.ttsPitch ?? 1;
 
-  const baseRate = s?.ttsRate ?? 1;
-  const basePitch = s?.ttsPitch ?? 1;
+  if (base === "ru") {
+    outText = normalizeRuTtsText(outText);
+    const wobble = needsAntiWobbleRu(outText);
+    rate = wobble ? Math.max(1.02, rate) : Math.max(0.95, rate);
+    pitch = wobble ? (pitch === 1 ? 0.88 : pitch) : pitch === 1 ? 0.9 : pitch;
+  }
 
-  // 🔧 안정 보정
-  const rate = wobble
-    ? Math.max(1.02, baseRate) // 약간 빠르게
-    : Math.max(0.95, baseRate);
-
-  const pitch = wobble
-    ? basePitch === 1
-      ? 0.88
-      : basePitch // 약간 낮춰서 떨림 억제
-    : basePitch === 1
-    ? 0.9
-    : basePitch;
-
-  return speak(txt, "ru-RU", {
-    voiceName: s?.ruVoiceName,
-    volume: s?.ttsVolume,
+  return speak(outText, langTag, {
+    voiceName,
+    volume: settings?.ttsVolume,
     rate,
     pitch,
-    cancelBeforeSpeak: false,
+    cancelBeforeSpeak: extra.cancelBeforeSpeak ?? false,
+    strictLanguage: settings?.strictTtsLanguage !== false,
   });
-};
+}
 
-const speakKO = async (t, s) => {
-  await ensureVoicesLoaded();
-  return speak(t, "ko-KR", {
-    voiceName: s?.koVoiceName,
-    volume: s?.ttsVolume,
-    rate: s?.ttsRate,
-    pitch: s?.ttsPitch,
-    cancelBeforeSpeak: s?.cancelBeforeSpeak,
-  });
-};
+// ✅ 각 텍스트의 실제 문자에 따라 러시아어/한국어/영어 TTS를 엄격 선택
+const speakRU = async (t, s) => speakByDetectedLanguage(t, "ru-RU", s, { cancelBeforeSpeak: false });
+const speakKO = async (t, s) => speakByDetectedLanguage(t, "ko-KR", s, { cancelBeforeSpeak: s?.cancelBeforeSpeak });
+const speakEN = async (t, s) => speakByDetectedLanguage(t, "en-US", s, { cancelBeforeSpeak: s?.cancelBeforeSpeak });
 // ====== Audio Blob Store (IndexedDB) ======
 const AUDIO_DB = {
   name: "rusdrops_audio_db_v1",
@@ -3647,13 +3686,13 @@ export default function App() {
   function buildCloudAppStatePayload() {
     return safeJsonValue(
       {
-        version: "v28.1.9",
+        version: "v28.2.1",
         words,
         settings,
         theme,
         updatedAt: Date.now(),
       },
-      { version: "v28.1.9", words: [], settings: DEFAULT_SETTINGS, theme: DEFAULT_THEME, updatedAt: Date.now() }
+      { version: "v28.2.1", words: [], settings: DEFAULT_SETTINGS, theme: DEFAULT_THEME, updatedAt: Date.now() }
     );
   }
 
@@ -4798,7 +4837,7 @@ export default function App() {
           <div className="bpModalSheet" onClick={(e) => e.stopPropagation()}>
             <div className="bpModalHeader">
               <div className="bpModalTitle">설정</div>
-              <div className="bpModalVersion">v28.1.9 Bottom Headphone Start Fix</div>
+              <div className="bpModalVersion">v28.2.1 Strict Multi-Language TTS</div>
               <button
                 className="bpModalClose"
                 onClick={() => setAppSettingsOpen(false)}
@@ -5628,6 +5667,33 @@ function StatCard({ title, value }) {
   );
 }
 function VoiceSettings({ settings, setSettings, voices }) {
+  const hasRu = voices.some((v) => voiceMatchesLang(v, "ru-RU"));
+  const hasKo = voices.some((v) => voiceMatchesLang(v, "ko-KR"));
+  const hasEn = voices.some((v) => voiceMatchesLang(v, "en-US"));
+
+  const VoiceSelect = ({ label, langTag, value, onChange, testText, onTest }) => {
+    const list = voices.filter((v) => voiceMatchesLang(v, langTag));
+    const ok = list.length > 0;
+    return (
+      <div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
+          {label} 음성 {ok ? "✅" : "⚠️ 미감지"}
+        </div>
+        <select value={value || ""} onChange={onChange} style={{ width: "100%" }}>
+          <option value="">자동 선택 ({langBase(langTag)})</option>
+          {list.map((v) => (
+            <option key={v.name + v.lang} value={v.name}>
+              {v.name} ({v.lang})
+            </option>
+          ))}
+        </select>
+        <button onClick={onTest} style={{ marginTop: 6 }}>
+          {label} 테스트
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div
       style={{
@@ -5637,59 +5703,43 @@ function VoiceSettings({ settings, setSettings, voices }) {
         marginTop: 8,
       }}
     >
+      <VoiceSelect
+        label="러시아어"
+        langTag="ru-RU"
+        value={settings.ruVoiceName}
+        onChange={(e) => setSettings((s) => ({ ...s, ruVoiceName: e.target.value }))}
+        testText="привет"
+        onTest={() => speakRU("привет", settings)}
+      />
+
+      <VoiceSelect
+        label="한국어"
+        langTag="ko-KR"
+        value={settings.koVoiceName}
+        onChange={(e) => setSettings((s) => ({ ...s, koVoiceName: e.target.value }))}
+        testText="안녕하세요"
+        onTest={() => speakKO("안녕하세요", settings)}
+      />
+
+      <VoiceSelect
+        label="영어"
+        langTag="en-US"
+        value={settings.enVoiceName}
+        onChange={(e) => setSettings((s) => ({ ...s, enVoiceName: e.target.value }))}
+        testText="hello"
+        onTest={() => speakEN("hello", settings)}
+      />
+
       <div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
-          러시아어 음성
+          음성 감지 상태
         </div>
-        <select
-          value={settings.ruVoiceName}
-          onChange={(e) =>
-            setSettings((s) => ({ ...s, ruVoiceName: e.target.value }))
-          }
-          style={{ width: "100%" }}
-        >
-          <option value="">자동 선택 (ru)</option>
-          {voices
-            .filter((v) => /ru/i.test(v.lang) || /ru/i.test(v.name))
-            .map((v) => (
-              <option key={v.name + v.lang} value={v.name}>
-                {v.name} ({v.lang})
-              </option>
-            ))}
-        </select>
-        <button
-          onClick={() => speakRU("привет", settings)}
-          style={{ marginTop: 6 }}
-        >
-          RU 테스트
-        </button>
-      </div>
-      <div>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
-          한국어 음성
+        <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+          RU: {hasRu ? "감지됨" : "미감지"} / KO: {hasKo ? "감지됨" : "미감지"} / EN: {hasEn ? "감지됨" : "미감지"}
         </div>
-        <select
-          value={settings.koVoiceName}
-          onChange={(e) =>
-            setSettings((s) => ({ ...s, koVoiceName: e.target.value }))
-          }
-          style={{ width: "100%" }}
-        >
-          <option value="">자동 선택 (ko)</option>
-          {voices
-            .filter((v) => /ko/i.test(v.lang) || /ko/i.test(v.name))
-            .map((v) => (
-              <option key={v.name + v.lang} value={v.name}>
-                {v.name} ({v.lang})
-              </option>
-            ))}
-        </select>
-        <button
-          onClick={() => speakKO("안녕하세요", settings)}
-          style={{ marginTop: 6 }}
-        >
-          KO 테스트
-        </button>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
+          ⚠️ 미감지 언어는 다른 언어 음성으로 억지 재생하지 않습니다. 갤럭시는 Android TTS 설정에서 해당 언어 음성을 설치해야 합니다.
+        </div>
       </div>
 
       <div>
@@ -5769,6 +5819,28 @@ function VoiceSettings({ settings, setSettings, voices }) {
             }
           />{" "}
           speak 전에 cancel()
+        </label>
+
+        <label
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            marginTop: 6,
+            marginLeft: 10,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={settings.strictTtsLanguage !== false}
+            onChange={(e) =>
+              setSettings((s) => ({
+                ...s,
+                strictTtsLanguage: e.target.checked,
+              }))
+            }
+          />{" "}
+          언어별 음성 강제
         </label>
 
         <label
